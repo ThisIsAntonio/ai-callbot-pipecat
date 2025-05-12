@@ -1,0 +1,28 @@
+# Entornos virtuales
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Archivos de entorno
+.env
+
+# Archivos de editor/IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Archivos temporales
+*~
+#*#
+
+# Archivos de distribución
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg

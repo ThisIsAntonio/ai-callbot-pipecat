@@ -25,6 +25,11 @@ from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.services.daily import DailyDialinSettings, DailyParams, DailyTransport
+#====== IMPORTS =====
+from datetime import datetime
+#====== END IMPORTS =====
+
+
 
 load_dotenv(override=True)
 
@@ -155,16 +160,84 @@ async def main(
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     # ------------ EVENT HANDLERS ------------
+    # Call tracking variables
+    call_start_time = None
+    call_end_time = None
+    call_terminated_reason = "unknown"
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
         logger.debug(f"First participant joined: {participant['id']}")
         await transport.capture_participant_transcription(participant["id"])
         await task.queue_frames([context_aggregator.user().get_context_frame()])
+        # ==== START CALL START TIME ====
+        nonlocal call_start_time
+        call_start_time = datetime.now()
+        # ==== END CALL START TIME ====
+        
+        
+    # ============== SILENCE DETECTION =============
+        # Silence detection
+    silence_timeout = 10  # segundos
+    silence_count = 0
+    max_silences = 3
+    silence_timer_task = None
+
+    async def play_silence_prompt():
+        nonlocal silence_count
+        silence_count += 1
+        logger.debug(f"Silence #{silence_count} detected. Playing TTS prompt.")
+
+        # Play a TTS message
+        await task.queue_frames(tts.create_frames("Are you still there?"))
+
+        if silence_count >= max_silences:
+            logger.debug("Maximum silence count reached. Ending call.")
+            await task.queue_frames([EndTaskFrame()])
+
+    async def silence_timer():
+        await asyncio.sleep(silence_timeout)
+        await play_silence_prompt()
+
+    @transport.event_handler("on_audio")
+    async def on_audio_event(transport, participant, audio_frame):
+        nonlocal silence_timer_task, silence_count
+
+        # Every time there is audio, we restart the timer
+        if silence_timer_task and not silence_timer_task.done():
+            silence_timer_task.cancel()
+
+        # Reset the silence timer
+        silence_timer_task = asyncio.create_task(silence_timer())
+
+        # If the user says something, we reset the silence counter.
+        if audio_frame.has_speech:
+            silence_count = 0
+
+    # ============== END SILENCE DETECTION =============
 
     @transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, reason):
         logger.debug(f"Participant left: {participant}, reason: {reason}")
+        
+        # ======== SHOW CALL SUMMARY ========
+        nonlocal call_end_time, call_terminated_reason
+
+        call_end_time = datetime.now()
+        call_terminated_reason = reason or "left"
+
+        duration = (call_end_time -
+                    call_start_time).total_seconds() if call_start_time else 0
+
+        logger.info("=== Call Summary ===")
+        logger.info(f"Start Time        : {call_start_time}")
+        logger.info(f"End Time          : {call_end_time}")
+        logger.info(f"Duration (s)      : {duration}")
+        logger.info(f"Silence Events    : {silence_count}")
+        logger.info(f"Termination Reason: {call_terminated_reason}")
+        logger.info("====================")
+        # ======== END CALL SUMMARY ========
+        
         await task.cancel()
 
     # ------------ RUN PIPELINE ------------

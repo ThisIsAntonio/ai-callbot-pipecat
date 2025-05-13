@@ -74,19 +74,23 @@ async def main(
             transcription_enabled=True,
         )
     else:
-        daily_dialin_settings = DailyDialinSettings(
-            call_id=dialin_settings.get("call_id"), call_domain=dialin_settings.get("call_domain")
-        )
-        transport_params = DailyParams(
-            api_url=daily_api_url,
-            api_key=daily_api_key,
-            dialin_settings=daily_dialin_settings,
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            video_out_enabled=False,
-            vad_analyzer=SileroVADAnalyzer(),
-            transcription_enabled=True,
-        )
+        if dialin_settings:
+            daily_dialin_settings = DailyDialinSettings(
+                call_id=dialin_settings.get("call_id"), 
+                call_domain=dialin_settings.get("call_domain")
+            )
+        else:
+            daily_dialin_settings = None
+            transport_params = DailyParams(
+                api_url=daily_api_url,
+                api_key=daily_api_key,
+                dialin_settings=daily_dialin_settings,
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                video_out_enabled=False,
+                vad_analyzer=SileroVADAnalyzer(),
+                transcription_enabled=True,
+            )
 
     # Initialize transport with Daily
     transport = DailyTransport(
@@ -164,6 +168,9 @@ async def main(
     call_start_time = None
     call_end_time = None
     call_terminated_reason = "unknown"
+    silence_timeout = 10  # seconds
+    max_silences = 3
+    silence_count = 0
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
@@ -171,48 +178,26 @@ async def main(
         await transport.capture_participant_transcription(participant["id"])
         await task.queue_frames([context_aggregator.user().get_context_frame()])
         # ==== START CALL START TIME ====
-        nonlocal call_start_time
+        nonlocal call_start_time, silence_count
         call_start_time = datetime.now()
         # ==== END CALL START TIME ====
         
         
     # ============== SILENCE DETECTION =============
-        # Silence detection
-    silence_timeout = 10  # segundos
-    silence_count = 0
-    max_silences = 3
-    silence_timer_task = None
 
-    async def play_silence_prompt():
-        nonlocal silence_count
-        silence_count += 1
-        logger.debug(f"Silence #{silence_count} detected. Playing TTS prompt.")
 
-        # Play a TTS message
-        await task.queue_frames(tts.create_frames("Are you still there?"))
-
-        if silence_count >= max_silences:
-            logger.debug("Maximum silence count reached. Ending call.")
-            await task.queue_frames([EndTaskFrame()])
-
-    async def silence_timer():
-        await asyncio.sleep(silence_timeout)
-        await play_silence_prompt()
-
-    @transport.event_handler("on_audio")
-    async def on_audio_event(transport, participant, audio_frame):
-        nonlocal silence_timer_task, silence_count
-
-        # Every time there is audio, we restart the timer
-        if silence_timer_task and not silence_timer_task.done():
-            silence_timer_task.cancel()
-
-        # Reset the silence timer
-        silence_timer_task = asyncio.create_task(silence_timer())
-
-        # If the user says something, we reset the silence counter.
-        if audio_frame.has_speech:
-            silence_count = 0
+        async def silence_monitor():
+            nonlocal silence_count
+            while True:
+                await asyncio.sleep(silence_timeout)
+                silence_count += 1
+                logger.debug(f"Silence #{silence_count} detected.")
+                await task.queue_frames(tts.create_frames("Are you still there?"))
+                if silence_count >= max_silences:
+                    logger.debug("Ending call after 3 silent timeouts.")
+                    await task.queue_frames([EndTaskFrame()])
+                    break
+        asyncio.create_task(silence_monitor())
 
     # ============== END SILENCE DETECTION =============
 

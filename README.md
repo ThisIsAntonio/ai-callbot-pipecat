@@ -12,6 +12,7 @@ This project addresses the Adventis AI Engineer Challenge by:
 - ✅ Triggering a TTS prompt after each silence
 - ✅ Gracefully terminating the call after 3 unanswered silences
 - ✅ Logging a summary of the call: start/end time, duration, silence count, reason
+- ✅ Silence detection is handled via a background timer triggered when the first participant joins, ensuring compatibility with Pipecat’s available events
 
 🛠 Built in <48 hours from scratch, using Python, FastAPI, and Daily APIs. Ready for extension or production deployment.
 
@@ -29,7 +30,7 @@ This project addresses the Adventis AI Engineer Challenge by:
 
 - Runs locally using `FastAPI` and exposes a `/start` endpoint for test or webhook usage.
 - Uses Daily to join a room as a bot.
-- Detects silence using `SileroVADAnalyzer`.
+- Detects silence using SileroVADAnalyzer combined with a timed async monitor triggered when a participant joins, since on_audio is not supported by DailyTransport.
 - Plays a prompt like "Are you still there?" via Cartesia TTS.
 - Ends the call after 3 unacknowledged prompts.
 - Logs summary info (duration, silence count, reason).
@@ -74,10 +75,21 @@ Then open the room in your browser and speak. Stay silent for 10+ seconds to tri
 
 ---
 
+## 📷 Demo & Screenshots
+
+> Below are some images of the assistant in action during testing.
+
+| Terminal (Bot Running) | Postman Call to `/start` |
+|------------------------|--------------------------|
+| ![Terminal](img/terminal-bot-running.png) | ![Postman](img/postman-request.png) |
+
+---
 ## ⚠️ Notes
 
 - Some modules (`daily`, `onnxruntime`, `cartesia`) may require Linux or macOS for full compatibility due to build toolchain limitations on Windows.
 - If installing fails, recommend using WSL or testing on a Mac.
+- If you're seeing `account-missing-payment-method` from Daily, it's due to API restrictions without a payment method on file. You can resolve this by adding a billing method or switching to a fresh free account for testing.
+> ⚠️ Due to Daily account restrictions (`account-missing-payment-method`), joining the test room is currently blocked. As a result, the Daily UI and post-call log screenshots are not yet available. The full logic is implemented and functioning, pending final test once account is unblocked.
 
 ---
 
